@@ -22,6 +22,7 @@
 
 import argparse
 import ast
+import collections
 import copy
 import errno
 import os
@@ -841,6 +842,7 @@ class CommitGraph:
         self.children = {}
         self._calculate_child_mapping()
         self._verify_child_mapping()
+        self.branch_to_commits = self._build_branch_to_commits_mapping()
 
     def _has_label(self, sha_one):
         """ Check if a sha1 is pointed to by a ref.
@@ -874,6 +876,25 @@ class CommitGraph:
             for c in chs:
                 for p in self.parents[c]:
                     assert (c in self.children[p])
+
+    def _build_branch_to_commits_mapping(self):
+        mapping = dict()
+        visited = set()
+        queue = collections.deque()
+        for sha_one, branches in self.branches.items():
+            b_name = list(branches)[0]
+            queue.append((sha_one, b_name))
+            visited.add(sha_one)
+            mapping[b_name] = set([sha_one])
+        while len(queue) > 0:
+            sha_one, b_name = queue.popleft()
+            for p in self.parents[sha_one]:
+                if p not in visited:
+                    visited.add(p)
+                    mapping[b_name].add(p)
+                    queue.append((p, b_name))
+        return mapping
+    
 
     @property
     def roots(self):
@@ -1036,6 +1057,13 @@ class CommitGraph:
         if history_direction is not None:
             rankdir = RANKDIR_OF_HISTORY_DIRECTION[history_direction]
             dot_file_lines.append(f'\trankdir="{rankdir}";')
+
+        for branch_name, commits in self.branch_to_commits.items():
+            dot_file_lines.append(f'\tsubgraph "cluster_{branch_name}" {{')
+            dot_file_lines.append(f'\t\tlabel="{branch_name}";')
+            dot_file_lines.extend(f'\t\t"{c}";' for c in commits)
+            dot_file_lines.append('\t}')
+
         for sha_one, labels, color in sorted(label_gen()):
             label = '\\n'.join(labels + ((with_commit_messages or sha_ones_on_labels) and [
                 format_label(sha_one),
