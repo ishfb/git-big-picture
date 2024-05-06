@@ -884,21 +884,32 @@ class CommitGraph:
                     assert (c in self.children[p])
 
     def _build_branch_to_commits_mapping(self):
-        mapping = dict()
+        mapping = collections.defaultdict(set)
         visited = set()
         queue = collections.deque()
+
+        def bfs(sha_one=None, b_name=None):
+            if sha_one is not None:
+                visited.add(sha_one)
+                queue.append((sha_one, b_name))
+
+            while len(queue) > 0:
+                sha_one, b_name = queue.popleft()
+                mapping[b_name].add(sha_one)
+                for p in self.parents[sha_one]:
+                    if p not in visited:
+                        visited.add(p)
+                        queue.append((p, b_name))
+
+        master_tip = next(c for c, b in self.branches.items() if 'master' in b)
+        bfs(master_tip, 'master')
+
         for sha_one, branches in self.branches.items():
             b_name = list(branches)[0]
             queue.append((sha_one, b_name))
             visited.add(sha_one)
-            mapping[b_name] = set([sha_one])
-        while len(queue) > 0:
-            sha_one, b_name = queue.popleft()
-            for p in self.parents[sha_one]:
-                if p not in visited:
-                    visited.add(p)
-                    mapping[b_name].add(p)
-                    queue.append((p, b_name))
+
+        bfs()
         return mapping
     
 
