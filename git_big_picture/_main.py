@@ -35,6 +35,8 @@ import textwrap
 import time
 from typing import List
 
+import yaml
+
 __version__ = '1.3.0'
 __docformat__ = "restructuredtext"
 
@@ -213,6 +215,10 @@ def create_parser():
                               action='store_false',
                               dest=OUT_FILE,
                               help='disable writing image to file')
+
+    format_group.add_argument('--branch-mapping',
+                              default=None,
+                              help='YAML file with branch mapping')
 
     format_group.add_argument('-w',
                               '--wait',
@@ -1005,7 +1011,8 @@ class CommitGraph:
                            sha_ones_on_labels,
                            with_commit_messages,
                            sha_one_digits=None,
-                           history_direction=None):
+                           history_direction=None,
+                           cluster_structure=None):
         """ Generate graphviz input.
 
         Parameters
@@ -1053,16 +1060,35 @@ class CommitGraph:
                 color = "/pastel13/%d" % case
                 yield (k, labels, color)
 
+
         dot_file_lines = ['digraph {']
+        dot_file_lines.append('\tnewrank=true')
         if history_direction is not None:
             rankdir = RANKDIR_OF_HISTORY_DIRECTION[history_direction]
             dot_file_lines.append(f'\trankdir="{rankdir}";')
 
-        for branch_name, commits in self.branch_to_commits.items():
-            dot_file_lines.append(f'\tsubgraph "cluster_{branch_name}" {{')
-            dot_file_lines.append(f'\t\tlabel="{branch_name}";')
-            dot_file_lines.extend(f'\t\t"{c}";' for c in commits)
-            dot_file_lines.append('\t}')
+
+        def cluster_gen(cluster_structure, indent, accumulated_name):
+            def i(k):
+                return '\t' * k
+
+            if cluster_structure is not None:
+                for name, structure in cluster_structure.items():
+                    dot_file_lines.append(f'{i(indent)}subgraph "cluster_{name}" {{')
+                    dot_file_lines.append(f'{i(indent + 1)}label="{name}";')
+                    cluster_gen(structure, indent + 1, f'{accumulated_name}/{name}')
+                    dot_file_lines.append(f'{i(indent)}}}')
+            else:
+                accumulated_name = accumulated_name[1:]
+                if accumulated_name.endswith('master'):
+                    accumulated_name = 'master'
+                for branch_name, commits in self.branch_to_commits.items():
+                    if branch_name.startswith(accumulated_name):
+                        dot_file_lines.extend(f'{i(indent)}"{c}";' for c in commits)
+                
+
+        if cluster_structure is not None:
+            cluster_gen(cluster_structure, 1, '')
 
         for sha_one, labels, color in sorted(label_gen()):
             label = '\\n'.join(labels + ((with_commit_messages or sha_ones_on_labels) and [
@@ -1104,11 +1130,17 @@ def innermost_main(opts):
         graph = graph.filter(**filter_settings)
         sha_one_digits = graph._minimal_sha_one_digits()
 
+    cluster_structure = None
+    if opts.branch_mapping is not None:
+        with open(opts.branch_mapping, 'rt') as f:
+            cluster_structure = yaml.safe_load(f)
+
     dot_file_lines = graph._generate_dot_file(
         sha_ones_on_labels=opts.all_commits,
         with_commit_messages=annotation_settings['messages'],
         sha_one_digits=sha_one_digits,
         history_direction=opts.history_direction,
+        cluster_structure=cluster_structure
     )
 
     if (output_settings[GRAPHVIZ] and output_settings[PROCESSED]):
